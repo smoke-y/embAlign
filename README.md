@@ -28,7 +28,7 @@ Using 26K pair
 ```
 total pairs processed:  2000
 precision@1: 6.05%
-precision@5: 9.049999999999999%
+precision@5: 15.1%
 [cosine similarity]
 greater than 0: 2000
 less than 0: 0
@@ -48,7 +48,7 @@ Using 10K pair
 ```
 total pairs processed:  2000
 precision@1: 4.6%
-precision@5: 6.950000000000001%
+precision@5: 11.55%
 [cosine similarity]
 greater than 0: 1999
 less than 0: 1
@@ -63,7 +63,7 @@ Using 5K pair
 ```
 total pairs processed:  2000
 precision@1: 4.3999999999999995%
-precision@5: 5.800000000000001%
+precision@5: 10.2%
 [cosine similarity]
 greater than 0: 1999
 less than 0: 1

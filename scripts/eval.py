@@ -51,7 +51,7 @@ for line in f:
     topTargets = topTargets.detach().squeeze(0).cpu().numpy()
     topScores = topScores.detach().squeeze(0).cpu().numpy()
     if topTargets[0] == tarIndex: p1 += 1
-    elif tarIndex in topTargets: p5 += 1
+    if tarIndex in topTargets: p5 += 1
 
 print("total pairs processed: ", x)
 print(f"precision@1: {(p1/x)*100}%\nprecision@5: {(p5/x)*100}%")
