@@ -87,3 +87,7 @@ strong corelation: 0
 moderate corelation: 3
 weak corelation: 1969
 ```
+
+paper: https://arxiv.org/abs/1710.04087<br>
+repo:  https://github.com/facebookresearch/MUSE<br>
+This is my submission to SarvamAI
