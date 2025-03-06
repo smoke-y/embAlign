@@ -1,19 +1,20 @@
 from gensim.models import KeyedVectors
 from torch.autograd import Variable
-from itertools import islice
 import torch.nn as nn
-import numpy as np
 import torch
 
 enRedDataset = "en.bin"
 hiRedDataset = "hi.bin"
-pairDataset  = "en-hi-cleaned.txt"
-#Good idea to put it under a class but it's only 4
+#Good idea to put it under a class but it's only 5
 DIM = 300
+DEVICE = "cuda"
 #From section 3.1
-DECAY = 0.95
+DECAY = 0.0005
 BATCH = 32
 LR = 0.1
+EPOCH = 5
+DIS_STEPS = 5
+EPOCH_SIZE = 1000000
 
 class Discriminator(nn.Module):
     def __init__(self):
@@ -21,6 +22,9 @@ class Discriminator(nn.Module):
         #Implemented according to section 3.1
         self.model = nn.Sequential(
             nn.Linear(DIM, 2048),
+            nn.LeakyReLU(negative_slope=0.2, inplace=True),
+            nn.Dropout(0.1),
+            nn.Linear(2048, 2048),
             nn.LeakyReLU(negative_slope=0.2, inplace=True),
             nn.Dropout(0.1),
             nn.Linear(2048, 2048),
@@ -42,36 +46,79 @@ class Mapping(nn.Module):
             W = self.W.weight
             self.W.weight.copy_((1 + self.beta) * W - self.beta * W.mm(W.transpose(0, 1).mm(W)))
 
-def train(D: Discriminator, M: Mapping, epoch: int, modelPath: str) -> None:
-    file = open(pairDataset, "r", encoding="utf8")
+def buildDict(w, enTen, hiTen):
+    srcEmb = w(enTen)
+    tarEmb = hiTen
+    srcEmb = srcEmb / srcEmb.norm(p=2, dim=1, keepdim=True).expand_as(srcEmb)
+    tarEmb = tarEmb / tarEmb.norm(p=2, dim=1, keepdim=True).expand_as(tarEmb)
+    nSrc = srcEmb.size(0)
+    allScores, allTargets = [], []
+    #nearest neighbour
+    for i in range(0, nSrc, BATCH):
+        scores = tarEmb.mm(srcEmb[i:min(nSrc, i+BATCH)].transpose(0, 1)).transpose(0, 1)
+        bestScores, bestTarget = scores.topk(2, dim=1)
+        allScores.append(bestScores)
+        allTargets.append(bestTarget)
+    allScores = torch.cat(allScores)
+    allTargets = torch.cat(allTargets)
+
+    allPairs = torch.cat([
+        torch.arange(0, allTargets.size(0), device=DEVICE).long().unsqueeze(1),
+        allTargets[:, 0].unsqueeze(1)
+    ], dim=1)
+
+    diff = allScores[:, 0] - allScores[:, 1]
+    reordered = diff.sort(0, descending=True)[1]
+    allScores = allScores[reordered]
+    allPairs = allPairs[reordered]
+    
+    mask = 0.01 < diff
+    mask = mask.unsqueeze(1).expand_as(allPairs).clone()
+    allPairs = allPairs.masked_select(mask).view(-1, 2)
+    
+    enEmb = enTen[allPairs[:, 0]]
+    hiEmb = hiTen[allPairs[:, 1]]
+    return enEmb, hiEmb
+
+def train(D: Discriminator, M: Mapping, modelPath: str) -> None:
     en = KeyedVectors.load_word2vec_format(enRedDataset, binary=True)
     hi = KeyedVectors.load_word2vec_format(hiRedDataset, binary=True)
+    en = torch.tensor(en.vectors, dtype=torch.float32, device=DEVICE)
+    hi = torch.tensor(hi.vectors, dtype=torch.float32, device=DEVICE)
     dOptim = torch.optim.SGD(D.parameters(), LR, weight_decay=DECAY)
     mOptim = torch.optim.SGD(M.parameters(), LR, weight_decay=DECAY)
-    y = Variable(torch.FloatTensor(2 * 32))
+    y = Variable(torch.FloatTensor(2 * 32)).to(DEVICE)
     y[:BATCH] = 0
     y[BATCH:] = 1
-    for e in range(epoch):
-        file.seek(0)
-        while True:
-            lines = list(islice(file, BATCH))
-            if len(lines) < BATCH: break
-            hiList, enList = [], []
-            for line in lines:
-                enWord, hiWord = line.split()
-                hiList.append(hi[hiWord])
-                enList.append(en[enWord])
-            hiEmb, enEmb = torch.Tensor(np.array(hiList)), torch.Tensor(np.array(enList))
+    #adversial training
+    for e in range(EPOCH):
+        for i in range(0, EPOCH_SIZE, BATCH):
+            for j in range(DIS_STEPS):
+                srcIds = torch.LongTensor(BATCH).random_(len(en)).to(DEVICE)
+                tarIds = torch.LongTensor(BATCH).random_(len(hi)).to(DEVICE)
+                srcEmb = en[srcIds]
+                tarEmb = hi[tarIds]
+                srcEmb = srcEmb / srcEmb.norm(p=2, dim=1, keepdim=True).expand_as(srcEmb)
+                tarEmb = tarEmb / tarEmb.norm(p=2, dim=1, keepdim=True).expand_as(tarEmb)
 
-            pred = M(enEmb)
-            x = torch.cat([pred, hiEmb])
+                pred = M(srcEmb)
+                x = torch.cat([pred, tarEmb])
 
-            #discriminator weight update
-            dPred = D(x.detach())
-            dLoss = torch.nn.functional.binary_cross_entropy(dPred.view(-1), y)
-            dOptim.zero_grad()
-            dLoss.backward()
-            dOptim.step()
+                #discriminator weight update
+                dPred = D(x.detach())
+                dLoss = torch.nn.functional.binary_cross_entropy(dPred.view(-1), y)
+                dOptim.zero_grad()
+                dLoss.backward()
+                dOptim.step()
+            srcIds = torch.LongTensor(BATCH).random_(len(en)).to(DEVICE)
+            tarIds = torch.LongTensor(BATCH).random_(len(hi)).to(DEVICE)
+            srcEmb = en[srcIds]
+            tarEmb = hi[tarIds]
+            srcEmb = srcEmb / srcEmb.norm(p=2, dim=1, keepdim=True).expand_as(srcEmb)
+            tarEmb = tarEmb / tarEmb.norm(p=2, dim=1, keepdim=True).expand_as(tarEmb)
+
+            pred = M(srcEmb)
+            x = torch.cat([pred, tarEmb])
 
             # #mapping weight update
             dPred = D(x)
@@ -81,8 +128,13 @@ def train(D: Discriminator, M: Mapping, epoch: int, modelPath: str) -> None:
             mOptim.step()
             M.orthogonalize()
 
-            print(dLoss.detach().numpy(), dLoss.detach().numpy())
-    file.close()
+    print(dLoss.detach().cpu().numpy(), dLoss.detach().cpu().numpy())
+    #procrustes algorithm
+    for i in range(3):
+        srcEmb, tarEmb = buildDict(M.W, en, hi)
+        Mm = tarEmb.T @ srcEmb
+        U,S,V = torch.linalg.svd(Mm)
+        with torch.no_grad(): M.W.weight.copy_(U @ V)
     torch.save(M.W, modelPath)
 
-train(Discriminator(), Mapping(), 5, "w_unsup.bin")
+train(Discriminator().to(DEVICE), Mapping().to(DEVICE), "w_unsup.bin")

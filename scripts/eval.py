@@ -1,5 +1,8 @@
 from gensim.models import KeyedVectors
+from sys import argv
 import torch
+
+assert len(argv) == 2, "Please provide the path for the W matrix"
 
 enRedDataset = "en.bin"
 hiRedDataset = "hi.bin"
@@ -12,7 +15,7 @@ hi = KeyedVectors.load_word2vec_format(hiRedDataset, binary=True)
 enTen = torch.tensor(en.vectors, dtype=torch.float32, device=DEVICE)
 hiTen = torch.tensor(hi.vectors, dtype=torch.float32, device=DEVICE)
 hiTen = hiTen / hiTen.norm(p=2, dim=1, keepdim=True).expand_as(hiTen)
-W = torch.load("w_sup.bin", weights_only=False).to(DEVICE)
+W = torch.load(argv[1], weights_only=False).to(DEVICE)
 
 f = open(pairDataset, "r", encoding="utf8")
 p1 = 0

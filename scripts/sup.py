@@ -10,7 +10,7 @@ BATCH = 128
 DEVICE = "cuda"
 
 parser = argparse.ArgumentParser(prog="supervised trainer")
-parser.add_argument("--iter", type=int, default=0, help="Number of iterations to refine W by calculating nearest neighbour", required=False)
+parser.add_argument("--iter", type=int, default=1, help="Number of iterations to refine W by calculating nearest neighbour", required=False)
 parser.add_argument("--dict", type=int, default=-1, help="Initial dictionary size",)
 args = parser.parse_args()
 
@@ -25,6 +25,7 @@ hiTen = torch.tensor(hi.vectors, dtype=torch.float32, device=DEVICE)
 def buildDict(w):
     srcEmb = w(enTen)
     tarEmb = hiTen
+    #normalize vectors
     srcEmb = srcEmb / srcEmb.norm(p=2, dim=1, keepdim=True).expand_as(srcEmb)
     tarEmb = tarEmb / tarEmb.norm(p=2, dim=1, keepdim=True).expand_as(tarEmb)
     nSrc = srcEmb.size(0)
@@ -43,12 +44,14 @@ def buildDict(w):
         allTargets[:, 0].unsqueeze(1)
     ], dim=1)
 
+    #sort based on confidence
     diff = allScores[:, 0] - allScores[:, 1]
     reordered = diff.sort(0, descending=True)[1]
     allScores = allScores[reordered]
     allPairs = allPairs[reordered]
     
-    mask = 0.001 < diff
+    #mask pairs whose diff is less than confidence threshold
+    mask = 0.01 < diff
     mask = mask.unsqueeze(1).expand_as(allPairs).clone()
     allPairs = allPairs.masked_select(mask).view(-1, 2)
     
@@ -79,6 +82,7 @@ for iter in range(ITER):
     M = tarEmb.T @ srcEmb
     U,S,V = torch.linalg.svd(M)
     with torch.no_grad(): W.weight.copy_(U @ V)
+    #making sure that W is close to an orthogonal matrix
     diff = (W.weight@W.weight.T) - torch.eye(DIM, device=DEVICE)
     print(f"[{iter}]frobenius norm: {torch.norm(diff).detach().cpu().numpy()}")
 
